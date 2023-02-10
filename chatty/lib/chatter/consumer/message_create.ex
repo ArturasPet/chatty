@@ -1,0 +1,37 @@
+defmodule Chatter.Consumer.MessageCreate do
+  @moduledoc false
+
+  @nosedrum_storage_implementation Nosedrum.Storage.ETS
+
+  alias Nostrum.Api
+  alias Nostrum.Struct.Message
+  alias Nosedrum.Invoker.Split, as: CommandInvoker
+  alias Nosedrum.MessageCache.Agent, as: MessageCache
+
+  @spec handle(Message.t()) :: :ok | nil
+  def handle(msg) do
+    unless msg.author.bot do
+      case CommandInvoker.handle_message(msg, @nosedrum_storage_implementation) do
+        {:error, {:unknown_subcommand, _name, :known, known}} ->
+          Api.create_message(
+            msg.channel_id,
+            "🚫 unknown subcommand, known subcommands: `#{Enum.join(known, "`, `")}`"
+          )
+
+        {:error, :predicate, {:error, reason}} ->
+          Api.create_message(msg.channel_id, "❌ cannot evaluate permissions: #{reason}")
+
+        {:error, :predicate, {:noperm, reason}} ->
+          Api.create_message(msg.channel_id, reason)
+
+        _ ->
+          :ok
+      end
+
+      if msg.guild_id != nil do
+        MessageCache.consume(msg, Bolt.MessageCache)
+        USW.apply(msg)
+      end
+    end
+  end
+end
